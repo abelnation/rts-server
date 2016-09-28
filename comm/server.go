@@ -27,7 +27,7 @@ func Listen(laddr string) (*Server, error) {
 	const netType string = "tcp"
 	addr, err := net.ResolveTCPAddr(netType, laddr)
 	if err != nil {
-
+		return nil, err
 	}
 	
 	tcpServer, err := net.ListenTCP(netType, addr)
