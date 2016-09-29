@@ -5,9 +5,9 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
-	"time"
 )
 
 type Server struct {
@@ -39,9 +39,9 @@ func Listen(laddr string) (*Server, error) {
 		tcpServer, 
 		make(chan *PlayerConn), 
 		make(chan Message),
-		make(chan bool),
+		make(chan bool, 1),
 		make(chan error),
-		make(chan bool),
+		make(chan bool, 1),
 		&sync.WaitGroup{},
 		false,
 	}, nil
@@ -77,10 +77,10 @@ func (s *Server) Loop() error {
 				fmt.Println("Waiting for client connections to finish...")
 				s.playerConnWait.Wait()
 				s.done <- true
+				close(s.done)
 			}()
 
 			break ServerLoop	
-
 		}
 		
 	}
@@ -95,6 +95,10 @@ func (s *Server) Loop() error {
 				s.handleMessage(msg)
 				
 			case err := <-s.error:
+				str := err.Error()
+				if strings.Contains(str, "use of closed network connection") {
+					continue
+				}
 				s.handleError(err)
 
 			case <-s.done:
@@ -105,6 +109,29 @@ func (s *Server) Loop() error {
 	fmt.Println("Done.")
 
 	return nil
+}
+
+func (s *Server) awaitConnection() {
+	for {
+		conn, err := s.Accept()
+		if err != nil {
+			// unexpected error
+			s.error <- fmt.Errorf("accepting player conn: %v", err)
+			continue
+		}
+
+		// immediately close/reject incoming connections if server is shutting down
+		if (s.isClosing) {
+			conn.SendString("server is not accepting requests")
+			if err := conn.Close(); err != nil {
+				s.error <- fmt.Errorf("failed to close player conn %s: %v", conn.Id(), err)
+			}
+			continue
+		}
+
+		// valid connection
+		s.playerConn <- conn
+	}
 }
 
 func (s *Server) handlePlayerConn(conn *PlayerConn) {
@@ -133,47 +160,14 @@ func (s *Server) handleError(err error) {
 }
 
 func (s *Server) cleanupPlayerConn(conn *PlayerConn) {
-	err := conn.Close()
-	if err != nil {
-		s.error <- err
+	if err := conn.Close(); err != nil {
+		s.error <- fmt.Errorf("failed to close player conn %s: %v", conn.Id(), err)
 	}
 	// decrement wait queue
 	s.playerConnWait.Done()
 }
 
-func (s *Server) awaitConnection() {
-	for {
 
-		// update deadline to 1s from now
-        err := s.SetDeadline(time.Now().Add(time.Second))
-        if err != nil {
-        	s.error <- err
-        	break
-        }
-
-		conn, err := s.Accept()
-		// timeout allows us to check and see if server is closing
-		// if so, stop accepting new requests
-		if err != nil {
-
-			netErr, ok := err.(net.Error)
-			if ok && netErr.Timeout() && netErr.Temporary() {
-				fmt.Println("taking a break.  checking for server close...")
-				if (s.isClosing) {
-					break
-				} else {
-					continue
-				}
-			}
-
-			// unexpected error
-			s.error <- err
-			continue
-		}
-		// valid connection
-		s.playerConn <- conn
-	}
-}
 
 func (s *Server) awaitSignals() {
 	// setup channel for os signals
@@ -182,6 +176,8 @@ func (s *Server) awaitSignals() {
 
 	signal := <- signals
 	fmt.Printf("Sig received: %s\n", signal);
+
+	// broadcast abort
 	close(s.abort)
 }
 
@@ -190,7 +186,7 @@ func (s *Server) awaitSignals() {
 //
 
 func (s *Server) Accept() (*PlayerConn, error) {
-	conn, err := s.TCPListener.Accept()
+	conn, err := s.TCPListener.AcceptTCP()
 	if err != nil {
 		return nil, err
 	}
@@ -200,9 +196,7 @@ func (s *Server) Accept() (*PlayerConn, error) {
 }
 
 func (s *Server) Close() error {
-	// TODO: clean-up / wait on clean player conn close
-	err := s.TCPListener.Close()
-	if err != nil {
+	if err := s.TCPListener.Close(); err != nil {
 		return err
 	}
 

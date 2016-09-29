@@ -1,46 +1,61 @@
 package comm
 
 import (
-	"bufio"
+ 	"bufio"
 	"fmt"
 	"net"
 	"strings"
+//	"time"
 )
 
 type PlayerConn struct {
-	net.Conn
+	*net.TCPConn
 	server *Server
+	connMsg chan string
+	done chan bool
 }
 
-func NewPlayerConn(conn net.Conn, s *Server) *PlayerConn {
-	return &PlayerConn{ conn, s }
+func NewPlayerConn(conn *net.TCPConn, s *Server) *PlayerConn {
+	return &PlayerConn{ 
+		conn, 
+		s,
+		make(chan string),
+		make(chan bool, 1),
+	}
 }
 
 func (c *PlayerConn) Id() string {
 	return c.RemoteAddr().String()
 }
 
-// TODO: return error via channel
 func (c *PlayerConn) Loop() {
-	scanner := bufio.NewScanner(c)
+	
+	go c.awaitMessages()
+	// scanner := NewTCPConnScanner(c)
+
 	OuterLoop:
 	for {
 		select {
 			// check for server abort
-			case <- c.server.abort:
+			case <-c.server.abort:
+				fmt.Println("PlayerConn detected server abort.  Shutting down...")
 				break OuterLoop
 
-			default:
-				if !scanner.Scan() {
-					break OuterLoop
-				}
-				msgStr := scanner.Text()
-				c.ReceivedString(msgStr)
+			case msg := <-c.connMsg:
+				c.ReceivedString(msg)
 		}	
 	}
 	
+}
+
+func (c *PlayerConn) awaitMessages() {
+	scanner := bufio.NewScanner(c)
+	for scanner.Scan() {
+		c.connMsg <- scanner.Text()	
+	}
+
 	if err := scanner.Err(); err != nil {
-		c.server.error <- err
+		c.server.error <- fmt.Errorf("player conn scan err: %v", err)
 	}
 }
 
