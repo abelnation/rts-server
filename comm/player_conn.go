@@ -12,7 +12,6 @@ type PlayerConn struct {
 	*net.TCPConn
 	server *Server
 	connMsg chan string
-	done chan bool
 }
 
 func NewPlayerConn(conn *net.TCPConn, s *Server) *PlayerConn {
@@ -20,7 +19,6 @@ func NewPlayerConn(conn *net.TCPConn, s *Server) *PlayerConn {
 		conn, 
 		s,
 		make(chan string),
-		make(chan bool, 1),
 	}
 }
 
@@ -31,7 +29,6 @@ func (c *PlayerConn) Id() string {
 func (c *PlayerConn) Loop() {
 	
 	go c.awaitMessages()
-	// scanner := NewTCPConnScanner(c)
 
 	OuterLoop:
 	for {
