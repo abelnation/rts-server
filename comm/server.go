@@ -57,7 +57,6 @@ func (s *Server) Loop() error {
 
 	ServerLoop:
 	for {
-
 		select {
 		case conn := <-s.playerConn:
 			s.handlePlayerConn(conn)
@@ -82,7 +81,6 @@ func (s *Server) Loop() error {
 
 			break ServerLoop	
 		}
-		
 	}
 
 	// Cleanup:
@@ -109,29 +107,6 @@ func (s *Server) Loop() error {
 	fmt.Println("Done.")
 
 	return nil
-}
-
-func (s *Server) awaitConnection() {
-	for {
-		conn, err := s.Accept()
-		if err != nil {
-			// unexpected error
-			s.error <- fmt.Errorf("accepting player conn: %v", err)
-			continue
-		}
-
-		// immediately close/reject incoming connections if server is shutting down
-		if (s.isClosing) {
-			conn.SendString("server is not accepting requests")
-			if err := conn.Close(); err != nil {
-				s.error <- fmt.Errorf("failed to close player conn %s: %v", conn.Id(), err)
-			}
-			continue
-		}
-
-		// valid connection
-		s.playerConn <- conn
-	}
 }
 
 func (s *Server) handlePlayerConn(conn *PlayerConn) {
@@ -167,7 +142,32 @@ func (s *Server) cleanupPlayerConn(conn *PlayerConn) {
 	s.playerConnWait.Done()
 }
 
+//
+// Goroutines
+//
 
+func (s *Server) awaitConnection() {
+	for {
+		conn, err := s.Accept()
+		if err != nil {
+			// unexpected error
+			s.error <- fmt.Errorf("accepting player conn: %v", err)
+			continue
+		}
+
+		// immediately close/reject incoming connections if server is shutting down
+		if (s.isClosing) {
+			conn.SendString("server is not accepting requests")
+			if err := conn.Close(); err != nil {
+				s.error <- fmt.Errorf("failed to close player conn %s: %v", conn.Id(), err)
+			}
+			continue
+		}
+
+		// valid connection
+		s.playerConn <- conn
+	}
+}
 
 func (s *Server) awaitSignals() {
 	// setup channel for os signals
@@ -199,7 +199,6 @@ func (s *Server) Close() error {
 	if err := s.TCPListener.Close(); err != nil {
 		return err
 	}
-
 	return nil
 }
 
